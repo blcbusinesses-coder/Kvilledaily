@@ -17,8 +17,8 @@ export default function Error({
     <div className="py-24 text-center">
       <h2 className="font-serif text-3xl font-bold mb-4 text-newsdark">Something went wrong</h2>
       <p className="text-gray-500 mb-6 max-w-md mx-auto">
-        There was an error loading this page. This usually means the database migration hasn't been
-        run yet, or there's a temporary connection issue.
+        There was an error loading this page. This usually means the database migration hasn&apos;t been
+        run yet, or there&apos;s a temporary connection issue.
       </p>
       <div className="flex gap-3 justify-center">
         <button

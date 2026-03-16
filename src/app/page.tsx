@@ -21,13 +21,13 @@ export default async function HomePage() {
     return (
       <div className="py-24 text-center">
         <h2 className="font-serif text-3xl font-bold mb-4 text-newsdark">Welcome to Kendallville Daily</h2>
-        <p className="text-gray-500 mb-2">The first batch of articles hasn't been generated yet.</p>
+        <p className="text-gray-500 mb-2">The first batch of articles hasn&apos;t been generated yet.</p>
         <p className="text-gray-400 text-sm">
           Run <code className="bg-gray-100 px-2 py-0.5 rounded text-sm">npm run pipeline</code> to generate
-          today's articles, or wait for the automated 6 AM run.
+          today&apos;s articles, or wait for the automated 6 AM run.
         </p>
         <p className="text-gray-400 text-xs mt-4">
-          Make sure you've run the Supabase SQL migration first — see README.md.
+          Make sure you&apos;ve run the Supabase SQL migration first — see README.md.
         </p>
       </div>
     );
