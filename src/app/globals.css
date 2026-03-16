@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+
+  body {
+    @apply bg-white text-newsdark antialiased;
+  }
+
+  /* Newspaper-style article body */
+  .article-body p {
+    @apply mb-4 leading-relaxed text-gray-800;
+  }
+
+  .article-body strong {
+    @apply font-bold text-newsdark;
+  }
+
+  .article-body h2 {
+    @apply text-xl font-bold mt-6 mb-3 font-sans;
+  }
+
+  .article-body h3 {
+    @apply text-lg font-bold mt-5 mb-2 font-sans;
+  }
+
+  .article-body blockquote {
+    @apply border-l-4 border-newsred pl-4 italic my-4 text-gray-600;
+  }
+}
+
+@layer components {
+  .category-badge {
+    @apply inline-block text-xs font-bold uppercase tracking-widest px-2 py-0.5 font-sans;
+  }
+
+  .category-badge-local-news   { @apply bg-blue-100 text-blue-800; }
+  .category-badge-weather       { @apply bg-sky-100 text-sky-800; }
+  .category-badge-sports        { @apply bg-green-100 text-green-800; }
+  .category-badge-public-safety { @apply bg-red-100 text-red-800; }
+  .category-badge-community-events { @apply bg-purple-100 text-purple-800; }
+  .category-badge-obituaries    { @apply bg-gray-100 text-gray-700; }
+
+  .masthead-border {
+    border-top: 4px solid #C41E3A;
+    border-bottom: 4px solid #C41E3A;
+  }
+
+  .section-divider {
+    @apply border-t-2 border-newsdark my-6;
+  }
+
+  .ad-placeholder {
+    @apply bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-sm font-sans;
+  }
+}
+
+/* Thin ruled lines between articles */
+.article-grid > * + * {
+  border-top: 1px solid #d0d0d0;
+}
+
+@media (min-width: 768px) {
+  .article-grid > * + * {
+    border-top: none;
+  }
+}

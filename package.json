@@ -1,0 +1,39 @@
+{
+  "name": "kendallville-daily",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "pipeline": "ts-node --project tsconfig.scripts.json scripts/run-pipeline.ts",
+    "init-db": "ts-node --project tsconfig.scripts.json scripts/init-db.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.79.0",
+    "@supabase/supabase-js": "^2.49.0",
+    "@types/dotenv": "^6.1.1",
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "dotenv": "^17.3.1",
+    "next": "^14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "rss-parser": "^3.13.0",
+    "slugify": "^1.6.6",
+    "stripe": "^17.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.9",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.18",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

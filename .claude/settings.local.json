@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(curl -s http://localhost:3001)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /PID 19864 /F)",
+      "Bash(wmic process:*)",
+      "Bash(npx tsc:*)",
+      "Bash(find 'C:/Kendallville daily/node_modules/@anthropic-ai/sdk' -name *.d.ts)",
+      "Bash(grep -r adaptive 'C:/Kendallville daily/node_modules/@anthropic-ai/sdk/' --include=*.d.ts)",
+      "Bash(npm run:*)",
+      "Bash(xargs grep:*)"
+    ]
+  }
+}
