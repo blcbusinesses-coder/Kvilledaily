@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-  apiVersion: '2025-02-24.acacia',
-});
-
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://kendallvilledaily.com';
 
 /**
@@ -19,6 +15,8 @@ export async function POST() {
       { status: 503 }
     );
   }
+
+  const stripe = new Stripe(stripeKey, { apiVersion: '2025-02-24.acacia' });
 
   try {
     const session = await stripe.checkout.sessions.create({
