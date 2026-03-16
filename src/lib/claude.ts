@@ -131,7 +131,7 @@ Return ONLY valid JSON, no other text.`;
     const response = await client.messages.create({
       model: 'claude-opus-4-6',
       max_tokens: 2048,
-      thinking: { type: 'adaptive' },
+      thinking: { type: 'enabled', budget_tokens: 1024 },
       messages: [{ role: 'user', content: prompt }],
     });
 
