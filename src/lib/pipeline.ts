@@ -113,7 +113,7 @@ Return ONLY the JSON array, no other text.`;
     logger.info(`Dedup: ${items.length} items → ${deduplicated.length} unique stories`);
     return deduplicated;
   } catch (err) {
-    logger.warn('Content dedup failed — using full list', err);
+    logger.warn(`Content dedup failed — using full list: ${err instanceof Error ? err.message : String(err)}`);
     return items;
   }
 }
