@@ -148,6 +148,30 @@ export async function getRecentArticleTitles(days = 3): Promise<Set<string>> {
 }
 
 /**
+ * Returns title + excerpt for articles published in the last N days.
+ * Used by the AI dedup step to detect same-event stories even when
+ * the headline wording differs.
+ */
+export async function getRecentArticleSummaries(
+  days = 7
+): Promise<Array<{ title: string; excerpt: string }>> {
+  try {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const { data, error } = await supabaseAdmin
+      .from('articles')
+      .select('title, excerpt')
+      .gte('published_at', since.toISOString())
+      .order('published_at', { ascending: false })
+      .limit(60);
+
+    if (error || !data) return [];
+    return data as Array<{ title: string; excerpt: string }>;
+  } catch { return []; }
+}
+
+/**
  * Returns all hero_image_url values ever stored in articles.
  * Used by the pipeline to ensure images are never repeated across runs.
  */

@@ -16,6 +16,7 @@ import {
   articleSlugExists,
   insertPipelineLog,
   getRecentArticleTitles,
+  getRecentArticleSummaries,
   getUsedImageUrls,
 } from './supabase';
 
@@ -65,37 +66,41 @@ function normaliseTitle(title: string): string {
 /**
  * Uses Claude haiku to identify and remove duplicate stories from a list of
  * scraped items. Compares both within the current batch AND against already-
- * published article titles so cross-category runs don't overlap in topic.
+ * published articles (title + excerpt) so same-event stories with different
+ * headlines are still caught across category runs.
  *
  * Falls back to the original list if the AI call fails.
  */
 async function deduplicateCandidates(
   items: ScrapedItem[],
-  publishedTitles: Set<string> = new Set()
+  publishedSummaries: Array<{ title: string; excerpt: string }> = []
 ): Promise<ScrapedItem[]> {
   if (items.length <= 1) return items;
 
   // Build a compact summary for each candidate item
-  const summaries = items.map((item, i) => {
-    const snippet = item.rawContent.replace(/\s+/g, ' ').slice(0, 150);
+  const candidateList = items.map((item, i) => {
+    const snippet = item.rawContent.replace(/\s+/g, ' ').slice(0, 200);
     return `${i}. TITLE: ${item.title} | CONTENT: ${snippet}`;
   });
 
-  // Include recently published titles so Claude avoids same-topic overlap
-  const publishedList = Array.from(publishedTitles).slice(0, 30);
+  // Include recently published title+excerpt so Claude can detect same-event
+  // stories even when the headline wording differs
+  const publishedList = publishedSummaries.slice(0, 40).map(
+    (s) => `- ${s.title}${s.excerpt ? ` — ${s.excerpt}` : ''}`
+  );
 
-  const prompt = `You are a news editor deciding which stories to publish. Avoid publishing stories that overlap in topic with already-published articles.
+  const prompt = `You are a news editor. Avoid republishing stories already covered.
 
-ALREADY PUBLISHED TODAY (do NOT publish anything covering the same topic):
-${publishedList.length > 0 ? publishedList.map((t) => `- ${t}`).join('\n') : '(none yet)'}
+ALREADY PUBLISHED (do NOT publish anything covering the same event or topic):
+${publishedList.length > 0 ? publishedList.join('\n') : '(none yet)'}
 
 NEW CANDIDATE ITEMS:
-${summaries.join('\n')}
+${candidateList.join('\n')}
 
 Rules:
-1. Remove any candidate that covers the SAME topic or event as an already-published article above.
-2. Remove candidates that cover the same topic as EACH OTHER — keep only the one with the most detail.
-3. Keep candidates that are genuinely new, unique stories not covered above.
+1. Remove any candidate that covers the SAME event or topic as an already-published article above — even if the headline is worded differently.
+2. Remove candidates that cover the same event as EACH OTHER — keep only the most detailed one.
+3. Keep candidates that are genuinely new, unique stories.
 
 Return a JSON array of candidate INDEX NUMBERS to keep. Example: [0, 2, 4]
 Return ONLY the JSON array, no other text.`;
@@ -187,7 +192,8 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
 
   // Skip titles already published in the last 7 days
   const existingTitles = await getRecentArticleTitles(7);
-  logger.info(`Existing titles in DB (last 3 days): ${existingTitles.size}`);
+  const existingSummaries = await getRecentArticleSummaries(7);
+  logger.info(`Existing articles in DB (last 7 days): ${existingTitles.size}`);
 
   const candidates = sorted
     .filter((item) => !existingTitles.has(normaliseTitle(item.title)))
@@ -212,7 +218,7 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
   // Collapses items about the same event, and rejects anything that overlaps
   // with already-published articles (cross-category duplicate prevention).
   logger.section('Step 2b: AI Duplicate Detection');
-  const unique = await deduplicateCandidates(newsworthy, existingTitles);
+  const unique = await deduplicateCandidates(newsworthy, existingSummaries);
 
   // For full runs: round-robin across categories for variety
   let prioritized: typeof items;

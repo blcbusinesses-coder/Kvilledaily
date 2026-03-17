@@ -116,8 +116,12 @@ async function getArticleImage(
 
   // ── 1. Real photo from the scraper ────────────────────────────────────────
   if (scrapedImageUrl && !usedImageUrls.has(scrapedImageUrl)) {
-    usedImageUrls.add(scrapedImageUrl);
-    return scrapedImageUrl;
+    const valid = await validateImageForArticle(scrapedImageUrl, title, excerpt);
+    if (valid) {
+      usedImageUrls.add(scrapedImageUrl);
+      return scrapedImageUrl;
+    }
+    usedImageUrls.add(scrapedImageUrl); // mark invalid so it's not retried
   }
 
   // ── 2. og:image from the article's source URL (covers Google News links) ──
@@ -125,8 +129,12 @@ async function getArticleImage(
     try {
       const ogImage = await fetchPageImage(sourceUrl);
       if (ogImage && !usedImageUrls.has(ogImage)) {
-        usedImageUrls.add(ogImage);
-        return ogImage;
+        const valid = await validateImageForArticle(ogImage, title, excerpt);
+        if (valid) {
+          usedImageUrls.add(ogImage);
+          return ogImage;
+        }
+        usedImageUrls.add(ogImage); // mark invalid so it's not retried
       }
     } catch {
       // Fall through

@@ -3,6 +3,10 @@ import { runPipeline } from '@/lib/pipeline';
 import { SLUG_TO_CATEGORY } from '@/types';
 import type { ArticleCategory } from '@/types';
 
+// Allow up to 5 minutes for the pipeline to scrape + generate articles.
+// Requires Vercel Pro plan; on Hobby the limit is 60 s.
+export const maxDuration = 300;
+
 /**
  * GET/POST /api/run-pipeline?category=<slug>
  *
