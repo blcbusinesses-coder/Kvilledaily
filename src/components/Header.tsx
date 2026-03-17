@@ -56,7 +56,7 @@ export function Header() {
       {/* Category navigation */}
       <nav className="bg-newsdark text-white">
         <div className="max-w-7xl mx-auto px-4">
-          <ul className="flex flex-wrap gap-0 font-sans text-sm uppercase tracking-wider">
+          <ul className="flex flex-wrap justify-center gap-0 font-sans text-sm uppercase tracking-wider">
             <li>
               <Link
                 href="/"
