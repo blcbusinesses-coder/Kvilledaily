@@ -2,9 +2,9 @@
 const nextConfig = {
   images: {
     remotePatterns: [
-      { protocol: 'https', hostname: 'images.unsplash.com' },
-      { protocol: 'https', hostname: 'picsum.photos' },
-      { protocol: 'https', hostname: '*.weather.gov' },
+      // Allow any HTTPS image source — scrapers pull from dozens of domains
+      // (ISP, city, county, news publishers, Unsplash, NWS, etc.)
+      { protocol: 'https', hostname: '**' },
     ],
   },
   async headers() {

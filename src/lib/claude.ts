@@ -21,7 +21,7 @@ export function resetUsedImages(persistedUrls: Set<string> = new Set()) {
   for (const url of persistedUrls) usedImageUrls.add(url);
 }
 
-// ─── Fallback image pool (used only when Unsplash is unavailable) ─────────────
+// ─── Fallback image pool (used only when all other tiers fail) ────────────────
 const FALLBACK_IMAGES: Record<ArticleCategory, string[]> = {
   'Local News': [
     'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&auto=format&fit=crop',
@@ -56,20 +56,60 @@ const FALLBACK_IMAGES: Record<ArticleCategory, string[]> = {
 };
 
 /**
+ * Uses Claude vision to verify the chosen image is a real, relevant news photo
+ * (not a logo, ad banner, icon, or completely unrelated stock image).
+ * Returns true if the image passes, false if it should be rejected.
+ */
+async function validateImageForArticle(
+  imageUrl: string,
+  title: string,
+  excerpt: string
+): Promise<boolean> {
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 10,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'url', url: imageUrl },
+            },
+            {
+              type: 'text',
+              text: `Is this a real, relevant news photo (not a logo, icon, advertisement, or completely unrelated image) for an article titled: "${title}" — ${excerpt}? Answer only YES or NO.`,
+            },
+          ],
+        },
+      ],
+    });
+    const text = response.content.find((b) => b.type === 'text');
+    return text?.type === 'text' && text.text.trim().toUpperCase().startsWith('YES');
+  } catch {
+    // If validation call fails, accept the image (fail open)
+    return true;
+  }
+}
+
+/**
  * Resolve the best available hero image for an article.
  *
  * Priority:
  *   1. Real photo extracted by the scraper from the source page (imageUrl)
  *   2. og:image fetched from the article's sourceUrl (Google News, etc.)
- *   3. Unsplash Search API — relevant stock photo based on article title
+ *   3. Unsplash Search API — uses Claude-generated imageKeywords for accuracy,
+ *      with vision validation to ensure relevance (up to 3 attempts)
  *   4. Static fallback pool per category
  *
  * Every chosen URL is recorded in usedImageUrls so it is never reused.
  */
 async function getArticleImage(
   title: string,
-  tags: string[],
+  excerpt: string,
   category: ArticleCategory,
+  imageKeywords: string,
   scrapedImageUrl?: string,
   sourceUrl?: string
 ): Promise<string> {
@@ -93,24 +133,12 @@ async function getArticleImage(
     }
   }
 
-  // ── 3. Unsplash Search API ────────────────────────────────────────────────
+  // ── 3. Unsplash Search API — Claude-generated keywords + vision validation ─
   const accessKey = process.env.UNSPLASH_ACCESS_KEY;
   if (accessKey) {
     try {
-      const stopWords = new Set([
-        'a','an','the','and','or','but','in','on','at','to','for','of','with',
-        'by','from','is','are','was','were','be','been','has','have','had',
-        'will','would','could','should','may','might','new','local','kendallville',
-        'indiana','noble','county',
-      ]);
-      const titleWords = title
-        .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, '')
-        .split(' ')
-        .filter((w) => w.length > 3 && !stopWords.has(w))
-        .slice(0, 4);
-
-      const query = titleWords.length > 0 ? titleWords.join(' ') : category.toLowerCase();
+      // Use the Claude-suggested keywords; fall back to category if empty
+      const query = imageKeywords.trim() || category.toLowerCase();
 
       const res = await fetch(
         `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=30&orientation=landscape&content_filter=high`,
@@ -120,10 +148,17 @@ async function getArticleImage(
       if (res.ok) {
         const data = await res.json() as { results: Array<{ urls: { regular: string } }> };
         const available = data.results.filter((r) => !usedImageUrls.has(r.urls.regular));
-        if (available.length > 0) {
-          const chosen = available[Math.floor(Math.random() * available.length)];
-          usedImageUrls.add(chosen.urls.regular);
-          return chosen.urls.regular;
+
+        // Try up to 3 candidates and validate each with Claude vision
+        for (let attempt = 0; attempt < Math.min(3, available.length); attempt++) {
+          const candidate = available[attempt];
+          const valid = await validateImageForArticle(candidate.urls.regular, title, excerpt);
+          if (valid) {
+            usedImageUrls.add(candidate.urls.regular);
+            return candidate.urls.regular;
+          }
+          // Mark invalid image as "used" so it's skipped in future runs too
+          usedImageUrls.add(candidate.urls.regular);
         }
       }
     } catch {
@@ -173,7 +208,8 @@ Return your response as a JSON object with these exact keys:
   "category": "One of: Local News, Weather, Sports, Public Safety, Community Events, Obituaries",
   "metaTitle": "SEO title (max 60 chars, include Kendallville)",
   "metaDescription": "SEO description (max 155 chars)",
-  "tags": ["tag1", "tag2", "tag3"]
+  "tags": ["tag1", "tag2", "tag3"],
+  "imageKeywords": "3-7 specific search terms describing what a PERFECT, REALISTIC news photo for this article would show — be concrete and visual, e.g. 'high school basketball game indiana gym crowd' or 'police car lights night road accident indiana'. These will be used to search Unsplash for a relevant image."
 }
 
 Return ONLY valid JSON, no other text.`;
@@ -201,20 +237,23 @@ Return ONLY valid JSON, no other text.`;
     }
 
     const slug = makeSlug(parsed.title);
+    const imageKeywords: string = parsed.imageKeywords ?? '';
+    const excerpt: string = parsed.excerpt ?? '';
 
     return {
       title: parsed.title,
       slug,
       content: parsed.content,
-      excerpt: parsed.excerpt,
+      excerpt,
       category: parsed.category as ArticleCategory,
       metaTitle: parsed.metaTitle ?? parsed.title,
-      metaDescription: parsed.metaDescription ?? parsed.excerpt,
+      metaDescription: parsed.metaDescription ?? excerpt,
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
       heroImageUrl: await getArticleImage(
         parsed.title,
-        Array.isArray(parsed.tags) ? parsed.tags : [],
+        excerpt,
         parsed.category as ArticleCategory,
+        imageKeywords,
         item.imageUrl,
         item.sourceUrl
       ),

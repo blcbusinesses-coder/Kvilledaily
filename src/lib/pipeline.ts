@@ -6,7 +6,8 @@
  * filters candidates to that category, and targets a smaller article count
  * (1–3 per scheduled run rather than 5–10 for a full run).
  */
-import type { Article, ArticleCategory } from '@/types';
+import Anthropic from '@anthropic-ai/sdk';
+import type { Article, ArticleCategory, ScrapedItem } from '@/types';
 import { logger } from './logger';
 import { runAllScrapers, runScrapersForCategory } from './scrapers';
 import { generateArticle, isContentNewsworthy, resetUsedImages } from './claude';
@@ -17,6 +18,8 @@ import {
   getRecentArticleTitles,
   getUsedImageUrls,
 } from './supabase';
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /** Articles to publish per category-specific run */
 const CATEGORY_MAX: Partial<Record<ArticleCategory, number>> = {
@@ -57,6 +60,62 @@ async function makeUniqueSlug(baseSlug: string): Promise<string> {
 
 function normaliseTitle(title: string): string {
   return title.toLowerCase().replace(/\W+/g, ' ').trim();
+}
+
+/**
+ * Uses Claude haiku to identify and remove duplicate stories from a list of
+ * scraped items. Multiple sources (3 Google News feeds, city, county) often
+ * report the same underlying event with different headlines — this collapses
+ * them to one item per unique story.
+ *
+ * Falls back to the original list if the AI call fails.
+ */
+async function deduplicateCandidates(items: ScrapedItem[]): Promise<ScrapedItem[]> {
+  if (items.length <= 1) return items;
+
+  // Build a compact summary for each item
+  const summaries = items.map((item, i) => {
+    const snippet = item.rawContent.replace(/\s+/g, ' ').slice(0, 150);
+    return `${i}. TITLE: ${item.title} | CONTENT: ${snippet}`;
+  });
+
+  const prompt = `You are a news editor. The following scraped items may contain duplicates — different sources reporting the SAME underlying event with different headlines.
+
+Items:
+${summaries.join('\n')}
+
+Identify which items cover the SAME underlying event and keep only ONE per unique story (prefer the one with the most content/detail).
+
+Return a JSON array of item INDEX NUMBERS to keep. Example: [0, 2, 4]
+Return ONLY the JSON array, no other text.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = response.content.find((b) => b.type === 'text');
+    if (!text || text.type !== 'text') return items;
+
+    let raw = text.text.trim();
+    // Strip code fences if present
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+
+    const indices: number[] = JSON.parse(raw);
+    if (!Array.isArray(indices) || indices.length === 0) return items;
+
+    const deduplicated = indices
+      .filter((i) => typeof i === 'number' && i >= 0 && i < items.length)
+      .map((i) => items[i]);
+
+    logger.info(`Dedup: ${items.length} items → ${deduplicated.length} unique stories`);
+    return deduplicated;
+  } catch (err) {
+    logger.warn('Content dedup failed — using full list', err);
+    return items;
+  }
 }
 
 export async function runPipeline(category?: ArticleCategory): Promise<PipelineResult> {
@@ -123,7 +182,7 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
     .filter((item) => !existingTitles.has(normaliseTitle(item.title)))
     .slice(0, 30);
 
-  logger.info(`Candidates after dedup filter: ${candidates.length}`);
+  logger.info(`Candidates after title dedup: ${candidates.length}`);
 
   const newsworthy: typeof items = [];
   for (const item of candidates) {
@@ -138,13 +197,18 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
     newsworthy.push(...candidates.slice(0, maxArticles));
   }
 
+  // ── Step 2b: AI content-similarity dedup ─────────────────────────────────
+  // Collapses items that are about the same event (different sources/headlines)
+  logger.section('Step 2b: AI Duplicate Detection');
+  const unique = await deduplicateCandidates(newsworthy);
+
   // For full runs: round-robin across categories for variety
   let prioritized: typeof items;
   if (category) {
-    prioritized = newsworthy.slice(0, maxArticles);
+    prioritized = unique.slice(0, maxArticles);
   } else {
     const byCategory = new Map<string, typeof items>();
-    for (const item of newsworthy) {
+    for (const item of unique) {
       const cat = item.category;
       if (!byCategory.has(cat)) byCategory.set(cat, []);
       byCategory.get(cat)!.push(item);
@@ -152,7 +216,7 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
     prioritized = [];
     const cats = Array.from(byCategory.keys());
     let i = 0;
-    while (prioritized.length < Math.min(maxArticles * 2, newsworthy.length)) {
+    while (prioritized.length < Math.min(maxArticles * 2, unique.length)) {
       const cat = cats[i % cats.length];
       const catItems = byCategory.get(cat) ?? [];
       if (catItems.length > 0) prioritized.push(catItems.shift()!);
