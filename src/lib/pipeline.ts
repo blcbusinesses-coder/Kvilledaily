@@ -33,8 +33,8 @@ const CATEGORY_MAX: Partial<Record<ArticleCategory, number>> = {
 };
 
 /** Fallbacks for a full (no-category) manual run */
-const FULL_RUN_MIN = 5;
-const FULL_RUN_MAX = 10;
+const FULL_RUN_MIN = 6;
+const FULL_RUN_MAX = 6;
 
 export interface PipelineResult {
   articlesGenerated: number;
