@@ -1,10 +1,14 @@
 /**
  * Main content pipeline — scrapes sources, generates articles via Claude,
  * saves to Supabase, and logs results.
+ *
+ * When a category is supplied the pipeline runs only the relevant scrapers,
+ * filters candidates to that category, and targets a smaller article count
+ * (1–3 per scheduled run rather than 5–10 for a full run).
  */
-import type { Article } from '@/types';
+import type { Article, ArticleCategory } from '@/types';
 import { logger } from './logger';
-import { runAllScrapers } from './scrapers';
+import { runAllScrapers, runScrapersForCategory } from './scrapers';
 import { generateArticle, isContentNewsworthy, resetUsedImages } from './claude';
 import {
   insertArticle,
@@ -14,8 +18,19 @@ import {
   getUsedImageUrls,
 } from './supabase';
 
-const MIN_ARTICLES = 5;
-const MAX_ARTICLES = 10;
+/** Articles to publish per category-specific run */
+const CATEGORY_MAX: Partial<Record<ArticleCategory, number>> = {
+  'Weather':          1,
+  'Public Safety':    2,
+  'Local News':       3,
+  'Community Events': 2,
+  'Sports':           2,
+  'Obituaries':       1,
+};
+
+/** Fallbacks for a full (no-category) manual run */
+const FULL_RUN_MIN = 5;
+const FULL_RUN_MAX = 10;
 
 export interface PipelineResult {
   articlesGenerated: number;
@@ -40,29 +55,31 @@ async function makeUniqueSlug(baseSlug: string): Promise<string> {
   return slug;
 }
 
-/** Normalise a title for duplicate comparison */
 function normaliseTitle(title: string): string {
   return title.toLowerCase().replace(/\W+/g, ' ').trim();
 }
 
-export async function runPipeline(): Promise<PipelineResult> {
+export async function runPipeline(category?: ArticleCategory): Promise<PipelineResult> {
   const startTime = Date.now();
   const errors: string[] = [];
   let articlesGenerated = 0;
 
-  // Load all image URLs already stored in the DB, then reset the tracker.
-  // This guarantees no image is ever repeated — not just within a run,
-  // but across all historical runs.
+  const maxArticles = category ? (CATEGORY_MAX[category] ?? 2) : FULL_RUN_MAX;
+  const minArticles = category ? 1 : FULL_RUN_MIN;
+
+  // Load all previously used image URLs from DB so images are never repeated
   const persistedImageUrls = await getUsedImageUrls();
   resetUsedImages(persistedImageUrls);
   logger.info(`Loaded ${persistedImageUrls.size} previously-used image URLs for deduplication`);
 
-  logger.section('Kendallville Daily — Daily Content Pipeline');
+  logger.section(`Kendallville Daily — Pipeline: ${category ?? 'ALL CATEGORIES'}`);
   logger.info(`Pipeline started at ${new Date().toISOString()}`);
 
-  // ── Step 1: Scrape all sources ────────────────────────────────────────────
+  // ── Step 1: Scrape relevant sources ──────────────────────────────────────
   logger.section('Step 1: Scraping Sources');
-  const { items, sourcesSucceeded, sourcesFailed } = await runAllScrapers();
+  const { items, sourcesSucceeded, sourcesFailed } = category
+    ? await runScrapersForCategory(category)
+    : await runAllScrapers();
 
   if (sourcesFailed.length > 0) {
     errors.push(`Sources failed: ${sourcesFailed.join(', ')}`);
@@ -81,21 +98,27 @@ export async function runPipeline(): Promise<PipelineResult> {
     return { articlesGenerated: 0, sourcesScraped: sourcesSucceeded, errors, durationSeconds: duration };
   }
 
-  // ── Step 2: Sort by recency, filter duplicates & newsworthy ──────────────
-  logger.section('Step 2: Filtering & Prioritising by Recency');
+  // ── Step 2: Filter to the target category, deduplicate, rank ─────────────
+  logger.section('Step 2: Filtering & Prioritising');
 
-  // Sort newest-first so today's news is always prioritised
-  const sorted = [...items].sort((a, b) => {
+  // When running for a specific category, keep only items in that category
+  const categoryFiltered = category
+    ? items.filter((item) => item.category === category)
+    : items;
+
+  logger.info(`Items matching category filter: ${categoryFiltered.length} / ${items.length}`);
+
+  // Sort newest-first
+  const sorted = [...categoryFiltered].sort((a, b) => {
     const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
     const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
     return tb - ta;
   });
 
-  // Load titles already in the DB (last 3 days) to skip near-duplicate stories
+  // Skip titles already published in the last 3 days
   const existingTitles = await getRecentArticleTitles(3);
-  logger.info(`Existing article titles in DB (last 3 days): ${existingTitles.size}`);
+  logger.info(`Existing titles in DB (last 3 days): ${existingTitles.size}`);
 
-  // Cap to avoid processing too many (cost control), skipping already-published items
   const candidates = sorted
     .filter((item) => !existingTitles.has(normaliseTitle(item.title)))
     .slice(0, 30);
@@ -104,7 +127,7 @@ export async function runPipeline(): Promise<PipelineResult> {
 
   const newsworthy: typeof items = [];
   for (const item of candidates) {
-    if (newsworthy.length >= MAX_ARTICLES * 2) break;
+    if (newsworthy.length >= maxArticles * 2) break;
     const worthy = await isContentNewsworthy(item.rawContent);
     if (worthy) newsworthy.push(item);
   }
@@ -112,29 +135,30 @@ export async function runPipeline(): Promise<PipelineResult> {
   logger.info(`Newsworthy items: ${newsworthy.length} / ${candidates.length}`);
 
   if (newsworthy.length === 0) {
-    // Fall back to all candidates if filter is too aggressive
-    newsworthy.push(...candidates.slice(0, MAX_ARTICLES));
+    newsworthy.push(...candidates.slice(0, maxArticles));
   }
 
-  // Prioritise variety across categories via round-robin
-  const byCategory = new Map<string, typeof items>();
-  for (const item of newsworthy) {
-    const cat = item.category;
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(item);
-  }
-
-  const prioritized: typeof items = [];
-  const categories = Array.from(byCategory.keys());
-  let i = 0;
-  while (prioritized.length < Math.min(MAX_ARTICLES * 2, newsworthy.length)) {
-    const cat = categories[i % categories.length];
-    const catItems = byCategory.get(cat) ?? [];
-    if (catItems.length > 0) {
-      prioritized.push(catItems.shift()!);
+  // For full runs: round-robin across categories for variety
+  let prioritized: typeof items;
+  if (category) {
+    prioritized = newsworthy.slice(0, maxArticles);
+  } else {
+    const byCategory = new Map<string, typeof items>();
+    for (const item of newsworthy) {
+      const cat = item.category;
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push(item);
     }
-    i++;
-    if (categories.every((c) => (byCategory.get(c)?.length ?? 0) === 0)) break;
+    prioritized = [];
+    const cats = Array.from(byCategory.keys());
+    let i = 0;
+    while (prioritized.length < Math.min(maxArticles * 2, newsworthy.length)) {
+      const cat = cats[i % cats.length];
+      const catItems = byCategory.get(cat) ?? [];
+      if (catItems.length > 0) prioritized.push(catItems.shift()!);
+      i++;
+      if (cats.every((c) => (byCategory.get(c)?.length ?? 0) === 0)) break;
+    }
   }
 
   // ── Step 3: Generate articles with Claude ────────────────────────────────
@@ -143,7 +167,7 @@ export async function runPipeline(): Promise<PipelineResult> {
   const generated: Article[] = [];
 
   for (const item of prioritized) {
-    if (generated.length >= MAX_ARTICLES) break;
+    if (generated.length >= maxArticles) break;
 
     try {
       logger.info(`Generating article for: "${item.title.slice(0, 60)}"`);
@@ -185,14 +209,15 @@ export async function runPipeline(): Promise<PipelineResult> {
     await new Promise((r) => setTimeout(r, 1500));
   }
 
-  if (articlesGenerated < MIN_ARTICLES) {
-    errors.push(`Only generated ${articlesGenerated}/${MIN_ARTICLES} minimum articles`);
+  if (articlesGenerated < minArticles) {
+    errors.push(`Only generated ${articlesGenerated}/${minArticles} minimum articles`);
   }
 
   // ── Step 4: Log results ───────────────────────────────────────────────────
   const durationSeconds = Math.round((Date.now() - startTime) / 1000);
 
   logger.section('Pipeline Complete');
+  logger.info(`Category: ${category ?? 'ALL'}`);
   logger.info(`Articles generated: ${articlesGenerated}`);
   logger.info(`Sources scraped: ${sourcesSucceeded.join(', ')}`);
   logger.info(`Duration: ${durationSeconds}s`);

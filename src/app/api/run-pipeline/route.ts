@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runPipeline } from '@/lib/pipeline';
+import { SLUG_TO_CATEGORY } from '@/types';
+import type { ArticleCategory } from '@/types';
 
 /**
- * POST /api/run-pipeline
- * Triggered by Vercel Cron at 6:00 AM daily.
- * Also callable manually with the CRON_SECRET header.
+ * GET/POST /api/run-pipeline?category=<slug>
+ *
+ * Triggered by Vercel Cron on a per-category schedule (see vercel.json).
+ * Also callable manually:
+ *   curl -H "Authorization: Bearer $CRON_SECRET" \
+ *        https://yourdomain.com/api/run-pipeline?category=sports
+ *
+ * If no category is supplied, all categories are run (legacy / manual full run).
  */
 export async function GET(req: NextRequest) {
   return handlePipeline(req);
@@ -20,19 +27,23 @@ async function handlePipeline(req: NextRequest): Promise<NextResponse> {
   const expectedSecret = process.env.CRON_SECRET;
 
   if (expectedSecret && secret !== expectedSecret) {
-    // Vercel also sends this header from its own cron system
     const cronHeader = req.headers.get('x-vercel-cron-signature');
     if (!cronHeader) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
   }
 
-  console.log('[Pipeline] Starting daily pipeline run...');
+  // Read optional category slug from query string (e.g. ?category=local-news)
+  const slug = req.nextUrl.searchParams.get('category') ?? '';
+  const category: ArticleCategory | undefined = SLUG_TO_CATEGORY[slug] as ArticleCategory | undefined;
+
+  console.log(`[Pipeline] Starting run — category: ${category ?? 'ALL'}`);
 
   try {
-    const result = await runPipeline();
+    const result = await runPipeline(category);
     return NextResponse.json({
       success: true,
+      category: category ?? 'all',
       articlesGenerated: result.articlesGenerated,
       sourcesScraped: result.sourcesScraped,
       errors: result.errors,
