@@ -6,6 +6,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import type { ScrapedItem } from '@/types';
 import { logger } from '../logger';
+import { extractImageFromElement } from './imageUtils';
 
 const BASE_URL = 'https://www.kendallville-in.gov';
 const PAGES_TO_SCRAPE = [
@@ -61,6 +62,7 @@ export async function scrapeCityKendallville(): Promise<ScrapedItem[]> {
           ].filter(Boolean).join('\n\n');
 
           const href = link?.startsWith('http') ? link : `${BASE_URL}${link ?? ''}`;
+          const imageUrl = extractImageFromElement(el, $, BASE_URL) ?? undefined;
 
           items.push({
             source: 'City of Kendallville',
@@ -69,6 +71,7 @@ export async function scrapeCityKendallville(): Promise<ScrapedItem[]> {
             rawContent,
             category: page.label === 'City Calendar' ? 'Community Events' : 'Local News',
             publishedAt: date || new Date().toISOString(),
+            imageUrl,
           });
         });
 

@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ArticleCategory, GeneratedArticle, ScrapedItem } from '@/types';
 import { CATEGORY_SLUGS } from '@/types';
 import slugify from 'slugify';
+import { fetchPageImage } from './scrapers/imageUtils';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -55,21 +56,47 @@ const FALLBACK_IMAGES: Record<ArticleCategory, string[]> = {
 };
 
 /**
- * Search Unsplash for a relevant, unused image.
- * Falls back to the static pool if the API key is missing or the request fails.
+ * Resolve the best available hero image for an article.
  *
- * Requires env var: UNSPLASH_ACCESS_KEY
+ * Priority:
+ *   1. Real photo extracted by the scraper from the source page (imageUrl)
+ *   2. og:image fetched from the article's sourceUrl (Google News, etc.)
+ *   3. Unsplash Search API — relevant stock photo based on article title
+ *   4. Static fallback pool per category
+ *
+ * Every chosen URL is recorded in usedImageUrls so it is never reused.
  */
 async function getArticleImage(
   title: string,
   tags: string[],
-  category: ArticleCategory
+  category: ArticleCategory,
+  scrapedImageUrl?: string,
+  sourceUrl?: string
 ): Promise<string> {
-  const accessKey = process.env.UNSPLASH_ACCESS_KEY;
 
+  // ── 1. Real photo from the scraper ────────────────────────────────────────
+  if (scrapedImageUrl && !usedImageUrls.has(scrapedImageUrl)) {
+    usedImageUrls.add(scrapedImageUrl);
+    return scrapedImageUrl;
+  }
+
+  // ── 2. og:image from the article's source URL (covers Google News links) ──
+  if (sourceUrl) {
+    try {
+      const ogImage = await fetchPageImage(sourceUrl);
+      if (ogImage && !usedImageUrls.has(ogImage)) {
+        usedImageUrls.add(ogImage);
+        return ogImage;
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  // ── 3. Unsplash Search API ────────────────────────────────────────────────
+  const accessKey = process.env.UNSPLASH_ACCESS_KEY;
   if (accessKey) {
     try {
-      // Build a focused search query from the title keywords + category
       const stopWords = new Set([
         'a','an','the','and','or','but','in','on','at','to','for','of','with',
         'by','from','is','are','was','were','be','been','has','have','had',
@@ -83,9 +110,7 @@ async function getArticleImage(
         .filter((w) => w.length > 3 && !stopWords.has(w))
         .slice(0, 4);
 
-      const query = titleWords.length > 0
-        ? titleWords.join(' ')
-        : category.toLowerCase();
+      const query = titleWords.length > 0 ? titleWords.join(' ') : category.toLowerCase();
 
       const res = await fetch(
         `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=30&orientation=landscape&content_filter=high`,
@@ -93,15 +118,8 @@ async function getArticleImage(
       );
 
       if (res.ok) {
-        const data = await res.json() as {
-          results: Array<{ urls: { regular: string } }>;
-        };
-
-        // Filter out any image already used in this run or in the DB
-        const available = data.results.filter(
-          (r) => !usedImageUrls.has(r.urls.regular)
-        );
-
+        const data = await res.json() as { results: Array<{ urls: { regular: string } }> };
+        const available = data.results.filter((r) => !usedImageUrls.has(r.urls.regular));
         if (available.length > 0) {
           const chosen = available[Math.floor(Math.random() * available.length)];
           usedImageUrls.add(chosen.urls.regular);
@@ -113,7 +131,7 @@ async function getArticleImage(
     }
   }
 
-  // ── Fallback: pick an unused image from the static pool ──────────────────
+  // ── 4. Static fallback pool ───────────────────────────────────────────────
   const pool = FALLBACK_IMAGES[category];
   const unused = pool.filter((url) => !usedImageUrls.has(url));
   const chosen = (unused.length > 0 ? unused : pool)[
@@ -196,7 +214,9 @@ Return ONLY valid JSON, no other text.`;
       heroImageUrl: await getArticleImage(
         parsed.title,
         Array.isArray(parsed.tags) ? parsed.tags : [],
-        parsed.category as ArticleCategory
+        parsed.category as ArticleCategory,
+        item.imageUrl,
+        item.sourceUrl
       ),
       sourceUrl: item.sourceUrl,
       sourceName: item.source,

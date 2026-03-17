@@ -6,6 +6,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import type { ScrapedItem } from '@/types';
 import { logger } from '../logger';
+import { extractImageFromElement } from './imageUtils';
 
 const BASE_URL = 'https://www.nobleco.org';
 const PAGES = [
@@ -40,6 +41,7 @@ async function scrapeGenericGovPage(
     if (!title || title.length < 8) continue;
 
     const href = link.startsWith('http') ? link : `${BASE_URL}${link}`;
+    const imageUrl = extractImageFromElement(el, $, BASE_URL) ?? undefined;
 
     items.push({
       source: `Noble County — ${sourceName}`,
@@ -48,6 +50,7 @@ async function scrapeGenericGovPage(
       rawContent: `TITLE: ${title}\n\nDATE: ${date}\n\nCONTENT: ${body.slice(0, 1500)}`,
       category: sourceName.includes('Event') || sourceName.includes('Calendar') ? 'Community Events' : 'Local News',
       publishedAt: date || new Date().toISOString(),
+      imageUrl,
     });
   }
 

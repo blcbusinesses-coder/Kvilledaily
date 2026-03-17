@@ -58,6 +58,8 @@ export interface ScrapedItem {
   rawContent: string;
   category: ArticleCategory;
   publishedAt?: string;
+  /** Real photo extracted from the source page — used as the article hero image */
+  imageUrl?: string;
 }
 
 export interface GeneratedArticle {

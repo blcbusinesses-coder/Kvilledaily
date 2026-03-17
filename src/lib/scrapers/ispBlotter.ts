@@ -7,6 +7,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import type { ScrapedItem } from '@/types';
 import { logger } from '../logger';
+import { extractImageFromHtml } from './imageUtils';
 
 const ISP_RSS = 'https://www.in.gov/isp/news/feed/';
 const ISP_NEWSROOM = 'https://www.in.gov/isp/news/';
@@ -17,13 +18,17 @@ const HEADERS = {
   'User-Agent': 'KendallvilleDaily/1.0 (contact@kendallvilledaily.com)',
 };
 
-async function fetchArticleText(url: string): Promise<string> {
+async function fetchArticleData(url: string): Promise<{ text: string; imageUrl: string | null }> {
   try {
-    const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
-    const $ = cheerio.load(res.data);
-    return $('article, .news-content, .press-release, main, .content').text().replace(/\s+/g, ' ').trim().slice(0, 2000);
+    const res = await axios.get<string>(url, { headers: HEADERS, timeout: 10000 });
+    const html = res.data as string;
+    const $ = cheerio.load(html);
+    const text = $('article, .news-content, .press-release, main, .content')
+      .text().replace(/\s+/g, ' ').trim().slice(0, 2000);
+    const imageUrl = extractImageFromHtml(html, 'https://www.in.gov');
+    return { text, imageUrl };
   } catch {
-    return '';
+    return { text: '', imageUrl: null };
   }
 }
 
@@ -45,11 +50,13 @@ export async function scrapeISPBlotter(): Promise<ScrapedItem[]> {
         continue;
       }
 
-      // Fetch full article if link available
+      // Fetch full article if link available — also grabs og:image in same request
       let body = description;
+      let imageUrl: string | undefined;
       if (link) {
-        const fullText = await fetchArticleText(link);
-        if (fullText.length > body.length) body = fullText;
+        const { text, imageUrl: img } = await fetchArticleData(link);
+        if (text.length > body.length) body = text;
+        if (img) imageUrl = img;
       }
 
       items.push({
@@ -59,6 +66,7 @@ export async function scrapeISPBlotter(): Promise<ScrapedItem[]> {
         rawContent: `PRESS RELEASE: ${title}\n\nDATE: ${entry.pubDate ?? ''}\n\nDETAILS: ${body}`,
         category: 'Public Safety',
         publishedAt: entry.pubDate ?? new Date().toISOString(),
+        imageUrl,
       });
     }
   } catch (err) {

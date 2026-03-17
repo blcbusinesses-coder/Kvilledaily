@@ -7,6 +7,7 @@ import * as cheerio from 'cheerio';
 import Parser from 'rss-parser';
 import type { ScrapedItem } from '@/types';
 import { logger } from '../logger';
+import { extractImageFromElement } from './imageUtils';
 
 const HEADERS = {
   'User-Agent': 'KendallvilleDaily/1.0 (contact@kendallvilledaily.com)',
@@ -41,6 +42,7 @@ async function scrapeSchoolAthletics(url: string, label: string): Promise<Scrape
     if (!title || title.length < 8) continue;
 
     const href = link.startsWith('http') ? link : `${new URL(url).origin}${link}`;
+    const imageUrl = extractImageFromElement(el, $, new URL(url).origin) ?? undefined;
 
     items.push({
       source: label,
@@ -48,6 +50,7 @@ async function scrapeSchoolAthletics(url: string, label: string): Promise<Scrape
       title,
       rawContent: `SPORTS UPDATE — ${label}\n\nTITLE: ${title}\n\nDETAILS: ${body.slice(0, 1200)}`,
       category: 'Sports',
+      imageUrl,
     });
   }
 
