@@ -6,7 +6,7 @@ import * as dotenv from 'dotenv';
 import path from 'path';
 
 // Load .env.local
-dotenv.config({ path: path.join(process.cwd(), '.env.local') });
+dotenv.config({ path: path.join(process.cwd(), '.env.local'), override: true });
 
 async function main() {
   console.log('🗞  Kendallville Daily — Manual Pipeline Run');
