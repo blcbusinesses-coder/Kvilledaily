@@ -5,88 +5,121 @@ import slugify from 'slugify';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Large image pool per category — prevents repeats across articles in same run
-const CATEGORY_IMAGES: Record<ArticleCategory, string[]> = {
+// ─── Image deduplication ──────────────────────────────────────────────────────
+// Populated at the start of each pipeline run with all URLs already in the DB,
+// then extended as each new article is assigned an image. Guarantees no image
+// ever appears twice — not just within a run, but across all runs.
+const usedImageUrls = new Set<string>();
+
+/**
+ * Call once per pipeline run: clear in-memory state then seed with every
+ * hero_image_url already stored in Supabase.
+ */
+export function resetUsedImages(persistedUrls: Set<string> = new Set()) {
+  usedImageUrls.clear();
+  for (const url of persistedUrls) usedImageUrls.add(url);
+}
+
+// ─── Fallback image pool (used only when Unsplash is unavailable) ─────────────
+const FALLBACK_IMAGES: Record<ArticleCategory, string[]> = {
   'Local News': [
     'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1495020689067-958852a7765e?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1573152958734-1922c188fba3?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1568992687947-868a62a9f521?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1603796846097-bee99e4a601f?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1464746133101-a2c3f88e0dd9?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1521791136064-7986c2920216?w=800&auto=format&fit=crop',
   ],
   'Weather': [
     'https://images.unsplash.com/photo-1561484930-998b6a7b22e8?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1504608524841-42584120d693?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1530908295418-a12e326966ba?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1594760467013-64ac2b80b7d3?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1475274047050-1d0c0975c63e?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1534088568595-a066f410bcda?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1559963110-71b394e7494d?w=800&auto=format&fit=crop',
   ],
   'Sports': [
     'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1541534741688-6078c6bfb5c5?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1504450758481-7338eba7524a?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1543326727-cf6c39e8f84c?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1517649763962-0c623066013b?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop',
   ],
   'Public Safety': [
     'https://images.unsplash.com/photo-1575916115893-9c2e85c6d0f5?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1516715094483-75da7dee9758?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1612528443702-f6741f70a049?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1596394723269-b2cbca4e6313?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1532094349884-543559c5b9d6?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=800&auto=format&fit=crop',
   ],
   'Community Events': [
     'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1511795409834-ef04bbd61622?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1478720568477-152d9b164e26?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1464366400600-7168b8af9bc3?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1491438590914-bc09fcaaf77a?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800&auto=format&fit=crop',
   ],
   'Obituaries': [
     'https://images.unsplash.com/photo-1473177104440-ffee2f376098?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1490750967868-88df5691cc97?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=800&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1518199266791-5375a83190b7?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1504197832061-98fed9a6fcbd?w=800&auto=format&fit=crop',
-    'https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?w=800&auto=format&fit=crop',
   ],
 };
 
-// Tracks which images have been used in the current pipeline run
-const usedImagesThisRun = new Set<string>();
-
-/** Reset at the start of each pipeline run */
-export function resetUsedImages() {
-  usedImagesThisRun.clear();
-}
-
 /**
- * Picks an unused image for the category.
- * Falls back to any image if all have been used (shouldn't happen with 8 per category).
+ * Search Unsplash for a relevant, unused image.
+ * Falls back to the static pool if the API key is missing or the request fails.
+ *
+ * Requires env var: UNSPLASH_ACCESS_KEY
  */
-function getCategoryImage(category: ArticleCategory): string {
-  const images = CATEGORY_IMAGES[category];
-  const unused = images.filter((url) => !usedImagesThisRun.has(url));
-  const pool = unused.length > 0 ? unused : images;
-  const chosen = pool[Math.floor(Math.random() * pool.length)];
-  usedImagesThisRun.add(chosen);
+async function getArticleImage(
+  title: string,
+  tags: string[],
+  category: ArticleCategory
+): Promise<string> {
+  const accessKey = process.env.UNSPLASH_ACCESS_KEY;
+
+  if (accessKey) {
+    try {
+      // Build a focused search query from the title keywords + category
+      const stopWords = new Set([
+        'a','an','the','and','or','but','in','on','at','to','for','of','with',
+        'by','from','is','are','was','were','be','been','has','have','had',
+        'will','would','could','should','may','might','new','local','kendallville',
+        'indiana','noble','county',
+      ]);
+      const titleWords = title
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, '')
+        .split(' ')
+        .filter((w) => w.length > 3 && !stopWords.has(w))
+        .slice(0, 4);
+
+      const query = titleWords.length > 0
+        ? titleWords.join(' ')
+        : category.toLowerCase();
+
+      const res = await fetch(
+        `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=30&orientation=landscape&content_filter=high`,
+        { headers: { Authorization: `Client-ID ${accessKey}` } }
+      );
+
+      if (res.ok) {
+        const data = await res.json() as {
+          results: Array<{ urls: { regular: string } }>;
+        };
+
+        // Filter out any image already used in this run or in the DB
+        const available = data.results.filter(
+          (r) => !usedImageUrls.has(r.urls.regular)
+        );
+
+        if (available.length > 0) {
+          const chosen = available[Math.floor(Math.random() * available.length)];
+          usedImageUrls.add(chosen.urls.regular);
+          return chosen.urls.regular;
+        }
+      }
+    } catch {
+      // Fall through to static pool
+    }
+  }
+
+  // ── Fallback: pick an unused image from the static pool ──────────────────
+  const pool = FALLBACK_IMAGES[category];
+  const unused = pool.filter((url) => !usedImageUrls.has(url));
+  const chosen = (unused.length > 0 ? unused : pool)[
+    Math.floor(Math.random() * (unused.length > 0 ? unused : pool).length)
+  ];
+  usedImageUrls.add(chosen);
   return chosen;
 }
 
@@ -160,7 +193,11 @@ Return ONLY valid JSON, no other text.`;
       metaTitle: parsed.metaTitle ?? parsed.title,
       metaDescription: parsed.metaDescription ?? parsed.excerpt,
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-      heroImageUrl: getCategoryImage(parsed.category as ArticleCategory),
+      heroImageUrl: await getArticleImage(
+        parsed.title,
+        Array.isArray(parsed.tags) ? parsed.tags : [],
+        parsed.category as ArticleCategory
+      ),
       sourceUrl: item.sourceUrl,
       sourceName: item.source,
     };

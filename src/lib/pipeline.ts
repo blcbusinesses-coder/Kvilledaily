@@ -11,6 +11,7 @@ import {
   articleSlugExists,
   insertPipelineLog,
   getRecentArticleTitles,
+  getUsedImageUrls,
 } from './supabase';
 
 const MIN_ARTICLES = 5;
@@ -49,8 +50,12 @@ export async function runPipeline(): Promise<PipelineResult> {
   const errors: string[] = [];
   let articlesGenerated = 0;
 
-  // Reset image-use tracker for this run so no two articles share an image
-  resetUsedImages();
+  // Load all image URLs already stored in the DB, then reset the tracker.
+  // This guarantees no image is ever repeated — not just within a run,
+  // but across all historical runs.
+  const persistedImageUrls = await getUsedImageUrls();
+  resetUsedImages(persistedImageUrls);
+  logger.info(`Loaded ${persistedImageUrls.size} previously-used image URLs for deduplication`);
 
   logger.section('Kendallville Daily — Daily Content Pipeline');
   logger.info(`Pipeline started at ${new Date().toISOString()}`);

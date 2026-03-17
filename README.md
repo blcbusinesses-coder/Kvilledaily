@@ -76,6 +76,7 @@ Required variables:
 - `SUPABASE_SERVICE_ROLE_KEY` — From Supabase project settings → Service Role
 - `STRIPE_SECRET_KEY` + `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — From [dashboard.stripe.com](https://dashboard.stripe.com)
 - `NEXT_PUBLIC_ADSENSE_CLIENT_ID` — From Google AdSense (optional, shows placeholders until configured)
+- `UNSPLASH_ACCESS_KEY` — From [unsplash.com/developers](https://unsplash.com/developers) (free; enables relevant article images)
 - `CRON_SECRET` — Any random string (e.g., `openssl rand -hex 32`)
 
 ### 3. Set up the database

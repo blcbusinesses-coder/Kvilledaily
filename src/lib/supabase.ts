@@ -147,6 +147,22 @@ export async function getRecentArticleTitles(days = 3): Promise<Set<string>> {
   } catch { return new Set(); }
 }
 
+/**
+ * Returns all hero_image_url values ever stored in articles.
+ * Used by the pipeline to ensure images are never repeated across runs.
+ */
+export async function getUsedImageUrls(): Promise<Set<string>> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('articles')
+      .select('hero_image_url')
+      .not('hero_image_url', 'is', null);
+
+    if (error || !data) return new Set();
+    return new Set(data.map((r) => r.hero_image_url).filter(Boolean));
+  } catch { return new Set(); }
+}
+
 // ─── Pipeline log queries ────────────────────────────────────────────────────
 
 export async function insertPipelineLog(
