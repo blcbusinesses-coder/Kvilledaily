@@ -64,29 +64,40 @@ function normaliseTitle(title: string): string {
 
 /**
  * Uses Claude haiku to identify and remove duplicate stories from a list of
- * scraped items. Multiple sources (3 Google News feeds, city, county) often
- * report the same underlying event with different headlines — this collapses
- * them to one item per unique story.
+ * scraped items. Compares both within the current batch AND against already-
+ * published article titles so cross-category runs don't overlap in topic.
  *
  * Falls back to the original list if the AI call fails.
  */
-async function deduplicateCandidates(items: ScrapedItem[]): Promise<ScrapedItem[]> {
+async function deduplicateCandidates(
+  items: ScrapedItem[],
+  publishedTitles: Set<string> = new Set()
+): Promise<ScrapedItem[]> {
   if (items.length <= 1) return items;
 
-  // Build a compact summary for each item
+  // Build a compact summary for each candidate item
   const summaries = items.map((item, i) => {
     const snippet = item.rawContent.replace(/\s+/g, ' ').slice(0, 150);
     return `${i}. TITLE: ${item.title} | CONTENT: ${snippet}`;
   });
 
-  const prompt = `You are a news editor. The following scraped items may contain duplicates — different sources reporting the SAME underlying event with different headlines.
+  // Include recently published titles so Claude avoids same-topic overlap
+  const publishedList = Array.from(publishedTitles).slice(0, 30);
 
-Items:
+  const prompt = `You are a news editor deciding which stories to publish. Avoid publishing stories that overlap in topic with already-published articles.
+
+ALREADY PUBLISHED TODAY (do NOT publish anything covering the same topic):
+${publishedList.length > 0 ? publishedList.map((t) => `- ${t}`).join('\n') : '(none yet)'}
+
+NEW CANDIDATE ITEMS:
 ${summaries.join('\n')}
 
-Identify which items cover the SAME underlying event and keep only ONE per unique story (prefer the one with the most content/detail).
+Rules:
+1. Remove any candidate that covers the SAME topic or event as an already-published article above.
+2. Remove candidates that cover the same topic as EACH OTHER — keep only the one with the most detail.
+3. Keep candidates that are genuinely new, unique stories not covered above.
 
-Return a JSON array of item INDEX NUMBERS to keep. Example: [0, 2, 4]
+Return a JSON array of candidate INDEX NUMBERS to keep. Example: [0, 2, 4]
 Return ONLY the JSON array, no other text.`;
 
   try {
@@ -174,8 +185,8 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
     return tb - ta;
   });
 
-  // Skip titles already published in the last 3 days
-  const existingTitles = await getRecentArticleTitles(3);
+  // Skip titles already published in the last 7 days
+  const existingTitles = await getRecentArticleTitles(7);
   logger.info(`Existing titles in DB (last 3 days): ${existingTitles.size}`);
 
   const candidates = sorted
@@ -198,9 +209,10 @@ export async function runPipeline(category?: ArticleCategory): Promise<PipelineR
   }
 
   // ── Step 2b: AI content-similarity dedup ─────────────────────────────────
-  // Collapses items that are about the same event (different sources/headlines)
+  // Collapses items about the same event, and rejects anything that overlaps
+  // with already-published articles (cross-category duplicate prevention).
   logger.section('Step 2b: AI Duplicate Detection');
-  const unique = await deduplicateCandidates(newsworthy);
+  const unique = await deduplicateCandidates(newsworthy, existingTitles);
 
   // For full runs: round-robin across categories for variety
   let prioritized: typeof items;
